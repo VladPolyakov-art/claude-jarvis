@@ -14,6 +14,7 @@ PORT = int(os.environ.get("JARVIS_PORT", 8765))
 # Мозг: локальная Ollama
 OLLAMA_URL = os.environ.get("JARVIS_OLLAMA", "http://127.0.0.1:11434")
 OLLAMA_MODEL = os.environ.get("JARVIS_MODEL", "qwen3:4b-instruct")
+TALK_MODEL = os.environ.get("JARVIS_TALK_MODEL", "qwen3:8b")  # болтовня по ⌃⌥J — поумнее, но медленнее
 
 # Голос. Silero: мужские aidar, eugene (+ «-low» — ниже и медленнее), женские baya, kseniya, xenia.
 # Piper: мужские piper:dmitri, piper:denis, piper:ruslan (модели в ~/.jarvis/piper)

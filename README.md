@@ -72,7 +72,7 @@ Jarvis не начинает говорить без спроса. Сначал�
 
 Если Jarvis не запущен, хуки сразу молча выходят — Claude работает как обычно.
 
-Настройки через переменные окружения: `JARVIS_MODEL`, `JARVIS_HOTKEY`, `JARVIS_ANSWER_TIMEOUT` (30), `JARVIS_FOLLOWUP` (6; 0 — не слушать без вопроса), `JARVIS_SILENCE` (1.6 — пауза, после которой фраза считается законченной).
+Настройки через переменные окружения: `JARVIS_MODEL` (выжимки, qwen3:4b-instruct), `JARVIS_TALK_MODEL` (болтовня, qwen3:8b), `JARVIS_HOTKEY`, `JARVIS_ANSWER_TIMEOUT` (30), `JARVIS_FOLLOWUP` (6; 0 — не слушать без вопроса), `JARVIS_SILENCE` (1.6 — пауза, после которой фраза считается законченной).
 
 ## Устройство
 

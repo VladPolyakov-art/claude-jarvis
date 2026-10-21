@@ -16,15 +16,16 @@ STYLE = (
 )
 
 
-def _chat(system: str, user: str | list[dict], schema: dict, temperature: float = 0.3) -> dict:
+def _chat(system: str, user: str | list[dict], schema: dict, temperature: float = 0.3,
+          model: str = config.OLLAMA_MODEL, keep_alive: str = "30m") -> dict:
     history = user if isinstance(user, list) else [{"role": "user", "content": user}]
     body = {
-        "model": config.OLLAMA_MODEL,
+        "model": model,
         "messages": [{"role": "system", "content": system}, *history],
         "format": schema,
         "stream": False,
         "think": False,
-        "keep_alive": "30m",
+        "keep_alive": keep_alive,
         "options": {"temperature": temperature},
     }
     req = urllib.request.Request(
@@ -183,7 +184,7 @@ def talk(history: list[dict], chats: str) -> dict:
             "type": "object",
             "properties": {"speech": {"type": "string"}, "bye": {"type": "boolean"}},
             "required": ["speech", "bye"],
-        }, temperature=0.7)
+        }, temperature=0.7, model=config.TALK_MODEL, keep_alive="5m")  # 5 мин — не держать 5 ГБ в памяти
         if out.get("speech"):
             return out
     except Exception as e:

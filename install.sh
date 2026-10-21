@@ -19,6 +19,7 @@ if ! command -v ollama >/dev/null; then
   echo "Поставь Ollama (https://ollama.com/download), запусти её и перезапусти install.sh"; exit 1
 fi
 ollama pull "${JARVIS_MODEL:-qwen3:4b-instruct}"
+ollama pull "${JARVIS_TALK_MODEL:-qwen3:8b}"
 
 say_step "Python-окружение"
 uv venv --python 3.12 .venv
