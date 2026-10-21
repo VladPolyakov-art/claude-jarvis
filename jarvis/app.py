@@ -56,7 +56,8 @@ class JarvisApp(rumps.App):
         sig = [(c.title, c.waiting, len(c.pending)) for c in chats]
         if sig != self._chats_sig:
             self._chats_sig = sig
-            self.chats.clear()
+            if self.chats._menu is not None:  # rumps падает на clear() у ещё не созданного подменю
+                self.chats.clear()
             if not chats:
                 self.chats.add(rumps.MenuItem("Пока пусто"))
             for c in chats:
