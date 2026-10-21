@@ -22,16 +22,15 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundleIdentifier</key><string>local.jarvis.voice</string>
   <key>CFBundleExecutable</key><string>Jarvis</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.2</string>
+  <key>CFBundleShortVersionString</key><string>0.3</string>
   <key>LSUIElement</key><true/>
   <key>NSMicrophoneUsageDescription</key><string>Jarvis слушает твои ответы для Claude.</string>
 </dict></plist>
 PLIST
-cat > "$APP/Contents/MacOS/Jarvis" <<SH
-#!/bin/bash
-cd "$ROOT" && exec "$ROOT/.venv/bin/python" -m jarvis.app >> "\$HOME/.jarvis/app.out" 2>&1
-SH
-chmod +x "$APP/Contents/MacOS/Jarvis"
+# Нативный запуск со встроенным Python — доступы macOS получает «Jarvis», а не python3.12
+PYCFG="$("$ROOT/.venv/bin/python" -c "import sysconfig, os; print(os.path.join(sysconfig.get_config_var('BINDIR'), 'python3.12-config'))")"
+clang -O2 -o "$APP/Contents/MacOS/Jarvis" "$ROOT/scripts/launcher.c" -DJARVIS_ROOT="\"$ROOT\"" \
+  $("$PYCFG" --cflags) $("$PYCFG" --ldflags --embed) 2>/dev/null
 codesign --force --deep -s - "$APP" 2>/dev/null || true
 
 cat > "$AGENT" <<PLIST

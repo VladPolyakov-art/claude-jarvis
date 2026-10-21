@@ -8,14 +8,14 @@ Claude закончил шаг — Jarvis в двух фразах расска�
 
 ## Установка
 
-macOS на Apple Silicon, [Homebrew](https://brew.sh), [Ollama](https://ollama.com/download), [Claude Code](https://claude.com/claude-code).
+macOS на Apple Silicon, Command Line Tools (`xcode-select --install`), [Homebrew](https://brew.sh), [Ollama](https://ollama.com/download), [Claude Code](https://claude.com/claude-code).
 
 ```bash
 git clone https://github.com/VladPolyakov-art/claude-jarvis.git && cd claude-jarvis
 ./install.sh
 ```
 
-Скрипт ставит зависимости и модель Ollama, прописывает хуки в `~/.claude/settings.json` (с бэкапом), собирает `~/Applications/Jarvis.app` и включает его автозапуск при входе. Первый запуск качает модели (~2 ГБ).
+Скрипт ставит зависимости и модель Ollama, прописывает хуки в `~/.claude/settings.json` (с бэкапом), собирает `~/Applications/Jarvis.app` (нативный запуск со встроенным Python — доступы macOS выдаёт именно «Jarvis») и включает его автозапуск при входе. Первый запуск качает модели (~2 ГБ).
 
 Затем дай Jarvis доступы в «Системные настройки → Конфиденциальность и безопасность»: **Микрофон**, а для хоткея — **Универсальный доступ** и **Мониторинг ввода**.
 

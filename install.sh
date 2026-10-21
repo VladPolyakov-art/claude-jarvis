@@ -7,6 +7,7 @@ say_step() { printf "\n\033[1m▸ %s\033[0m\n" "$1"; }
 
 [ "$(uname -m)" = "arm64" ] || { echo "Нужен Mac на Apple Silicon (Whisper крутится на MLX)"; exit 1; }
 command -v brew >/dev/null || { echo "Нужен Homebrew: https://brew.sh"; exit 1; }
+command -v clang >/dev/null || { echo "Нужны Command Line Tools: xcode-select --install"; exit 1; }
 command -v claude >/dev/null || echo "⚠️  Claude Code не найден — хуки поставлю, но без него Jarvis бесполезен"
 
 say_step "Инструменты (uv, terminal-notifier)"
