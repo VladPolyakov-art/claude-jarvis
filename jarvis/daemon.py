@@ -38,6 +38,7 @@ STOP_WORDS = ("стоп", "отбой", "отмена", "хватит", "не п
 SHORT_NO = re.compile(r"^\W*(ничего|нет|не надо|потом|не сейчас|всё|все|пока всё|пока ничего)\W*$", re.I)
 MUTE = re.compile(r"^\W*(помолчи|замолчи|выключись|спи|отключись|уйди)\b", re.I)
 UNMUTE = re.compile(r"^\W*(включись|проснись|вернись)\b", re.I)
+REPEAT = re.compile(r"^\W*(повтори\w*|ещё раз|еще раз|не расслышал\w*|что\W*$|а\W*$|какой вопрос|что ты сказал)", re.I)
 COMMANDISH = re.compile(r"\b(чат\w*|переключи\w*|передай\w*)\b", re.I)
 
 
@@ -52,6 +53,8 @@ def interpret(said: str) -> dict:
         return {"intent": "mute"}
     if UNMUTE.match(bare):
         return {"intent": "unmute"}
+    if REPEAT.match(bare) or re.search(r"повтор\w* вопрос", low):
+        return {"intent": "repeat"}
     if not COMMANDISH.search(text):
         return {"intent": "reply", "text": bare if WAKE.match(text) else text}
     chats = sessions.recent()
@@ -95,8 +98,9 @@ def route(target: Chat, text: str) -> None:
         voice.speak(f"Закинул в «{target.title}». Передам, как только он закончит текущий шаг.")
 
 
-def converse(chat: Chat | None, prompt_timeout: float) -> str | None:
-    """Слушает и выполняет команды. Возвращает текст для текущего чата или None."""
+def converse(chat: Chat | None, prompt_timeout: float, replay: str = "") -> str | None:
+    """Слушает и выполняет команды. Возвращает текст для текущего чата или None.
+    replay — что повторить по команде «повтори»."""
     timeout = prompt_timeout
     for _ in range(4):  # список чатов / переспрос — и слушаем дальше
         said = voice.listen(timeout) if timeout > 0 else ""
@@ -115,7 +119,9 @@ def converse(chat: Chat | None, prompt_timeout: float) -> str | None:
             config.OFF_FLAG.unlink(missing_ok=True)
             voice.speak("Я снова в деле.")
             return None
-        if intent == "list":
+        if intent == "repeat":
+            voice.speak(replay or "Да я ничего и не спрашивал. Говори, что передать.")
+        elif intent == "list":
             voice.speak(chat_list())
         elif intent == "route" and cmd["chat"] is None:
             voice.speak("Не понял, в какой чат. Скажи название, или «сюда», если это этому чату.")
@@ -203,7 +209,8 @@ def on_stop(data: dict) -> dict:
                 return _continue(queued)
             if s.get("question"):
                 voice.speak(s["question"])
-            said = converse(chat, config.ANSWER_TIMEOUT if s.get("question") else config.FOLLOWUP_WINDOW)
+            replay = " ".join(x for x in (s["speech"], s.get("question") or "") if x)
+            said = converse(chat, config.ANSWER_TIMEOUT if s.get("question") else config.FOLLOWUP_WINDOW, replay)
             if not said:
                 if s.get("question"):
                     voice.speak(say("wait"))
@@ -295,7 +302,7 @@ def on_hotkey() -> None:
         elif intent == "unmute":
             config.OFF_FLAG.unlink(missing_ok=True)
             voice.speak("Я снова в деле.")
-        elif intent == "list":
+        elif intent in ("list", "repeat"):
             voice.speak(chat_list())
         elif intent == "route" and cmd["chat"]:
             route(cmd["chat"], cmd.get("text", ""))
@@ -344,7 +351,28 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
+def _ax_trusted(prompt: bool) -> bool:
+    """Есть ли у процесса «Универсальный доступ». prompt=True — macOS сама покажет окно и добавит Jarvis в список."""
+    try:
+        import ctypes
+        import objc
+        from Foundation import NSDictionary
+        ax = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
+        ax.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+        ax.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+        opts = NSDictionary.dictionaryWithDictionary_({"AXTrustedCheckOptionPrompt": prompt})
+        return ax.AXIsProcessTrustedWithOptions(objc.pyobjc_id(opts))
+    except Exception as e:
+        log(f"не смог проверить универсальный доступ: {e}")
+        return True
+
+
 def start_hotkey() -> None:
+    if not _ax_trusted(prompt=True):
+        log("хоткей ждёт доступа: Настройки → Конфиденциальность → Универсальный доступ → Jarvis. "
+            "Если Jarvis там уже включён — удали его «−» и перезапусти Jarvis (после пересборки старое разрешение не действует).")
+        threading.Thread(target=_await_trust, daemon=True).start()
+        return
     try:
         from pynput import keyboard
         keyboard.GlobalHotKeys({config.HOTKEY: lambda: threading.Thread(
@@ -352,6 +380,14 @@ def start_hotkey() -> None:
         log(f"хоткей {config.HOTKEY} — заговорить первым")
     except Exception as e:
         log(f"хоткей не включился ({e}). Дай доступ: Настройки → Конфиденциальность → Мониторинг ввода.")
+
+
+def _await_trust() -> None:
+    """Ждёт, пока пользователь включит доступ, и тогда включает хоткей без перезапуска."""
+    while not _ax_trusted(prompt=False):
+        time.sleep(3)
+    log("универсальный доступ получен")
+    start_hotkey()
 
 
 def serve(greet: bool = True) -> None:
