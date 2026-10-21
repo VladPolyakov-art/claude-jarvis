@@ -24,6 +24,16 @@ VOICE_FILE = HOME / "voice"      # `jarvis.sh voice NAME` — меняется �
 TTS_RATE = 48000
 
 
+def mode() -> str:
+    try:
+        name = MODE_FILE.read_text().strip()
+        if name in MODES:
+            return name
+    except OSError:
+        pass
+    return os.environ.get("JARVIS_MODE", "knock")
+
+
 def speaker() -> str:
     try:
         name = VOICE_FILE.read_text().strip()
@@ -37,6 +47,14 @@ def speaker() -> str:
 WHISPER_MODEL = os.environ.get("JARVIS_WHISPER", "mlx-community/whisper-large-v3-turbo")
 
 # Диалог
+MODES = {
+    "knock": "Сначала спрашивать «можешь говорить?»",
+    "talk": "Сразу рассказывать",
+    "quiet": "Только звук и уведомление",
+}
+MODE_FILE = HOME / "mode"
+KNOCK_WINDOW = float(os.environ.get("JARVIS_KNOCK", 6))     # сколько ждать «да» на «можешь говорить?», с
+DEFER = float(os.environ.get("JARVIS_DEFER", 180))           # сколько держать отложенный вопрос, с
 CHAT_WINDOW = float(os.environ.get("JARVIS_CHAT_WINDOW", "8"))  # сколько ждать реплику в болтовне
 HOTKEY = os.environ.get("JARVIS_HOTKEY", "<ctrl>+<alt>+j")
 ANSWER_TIMEOUT = float(os.environ.get("JARVIS_ANSWER_TIMEOUT", 30))   # ждать ответа на вопрос, с

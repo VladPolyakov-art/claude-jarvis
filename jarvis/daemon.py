@@ -18,7 +18,7 @@ _screen_handoff: dict[str, float] = {}   # чат → когда отправи�
 # ── Фразы «своего парня» ─────────────────────────────────────────────────
 
 SAY = {
-    "ack": ["Принял, передаю.", "Понял, лечу.", "Окей, отнёс.", "Записал, передаю."],
+    "ack": ["Принял, передаю в «{}».", "Понял, несу в «{}».", "Окей, отнёс в «{}».", "Записал, передаю в «{}»."],
     "cancel": ["Понял, молчу.", "Ок, ничего не передаю.", "Отбой, принято."],
     "wait": ["Ладно, жду тебя в чате.", "Ок, вернёшься — разберёмся.", "Понял, не горит."],
     "deaf": ["Не расслышал. Отвечай на экране.", "Тишина в эфире. Ладно, на экране ответишь."],
@@ -28,8 +28,8 @@ SAY = {
 }
 
 
-def say(kind: str) -> str:
-    return random.choice(SAY[kind])
+def say(kind: str, *args) -> str:
+    return random.choice(SAY[kind]).format(*args)
 
 
 # ── Голосовые команды ────────────────────────────────────────────────────
@@ -40,6 +40,9 @@ SHORT_NO = re.compile(r"^\W*(ничего|нет|не надо|потом|не �
 MUTE = re.compile(r"^\W*(помолчи|замолчи|выключись|спи|отключись|уйди)\b", re.I)
 UNMUTE = re.compile(r"^\W*(включись|проснись|вернись)\b", re.I)
 REPEAT = re.compile(r"^\W*(повтори\w*|ещё раз|еще раз|не расслышал\w*|что\W*$|а\W*$|какой вопрос|что ты сказал)", re.I)
+YES = re.compile(r"^\W*(да|давай|говори|ага|угу|рассказывай|расскажи|можно|могу|валяй|ок|окей|слушаю|"
+                 r"ну давай|конечно|го|погнали|поехали)\b", re.I)
+NO = re.compile(r"^\W*(нет|потом|не сейчас|не могу|позже|занят|подожди|погоди|не надо|отстань)\b", re.I)
 DICTATE = re.compile(r"^\W*(запиши|в буфер|продиктую|диктовка)\W*", re.I)
 COMMANDISH = re.compile(r"\b(чат\w*|переключи\w*|передай\w*)\b", re.I)
 
@@ -184,6 +187,46 @@ def _continue(text: str) -> dict:
             "reason": f"Пользователь ответил голосом через Jarvis: «{text}». Продолжай работу с учётом этого."}
 
 
+def knock(phrase: str) -> str:
+    """Постучаться: звук + короткая фраза, ждём согласия. → yes | no | none.
+    Любая другая речь — ты говоришь не с Джарвисом: молчим и ничего не забираем."""
+    voice.cue()
+    voice.speak(phrase)
+    said = voice.listen(config.KNOCK_WINDOW, beep=False)
+    if not said:
+        return "none"
+    bare = WAKE.sub("", said)
+    if YES.match(bare):
+        return "yes"
+    if NO.match(bare) or SHORT_NO.match(bare) or any(bare.lower().startswith(w) for w in STOP_WORDS):
+        return "no"
+    log(f"не ответ на стук, пропускаю: «{said}»")
+    return "none"
+
+
+def wait_deferred(chat: Chat) -> bool:
+    """Держит хук, пока не позовёшь (⌃⌥J или клик в меню), но не дольше DEFER. Диалог свободен."""
+    with sessions.lock:
+        chat.resume = threading.Event()
+    notify(chat.title, "Ждёт твоего ответа — жми ⌃⌥J или выбери чат в меню Jarvis")
+    try:
+        return chat.resume.wait(config.DEFER)
+    finally:
+        with sessions.lock:
+            chat.resume = None
+
+
+def resume(chat: Chat | None = None) -> bool:
+    """Вернуться к отложенному вопросу: указанного чата или самого старого."""
+    waiting = sessions.deferred()
+    if chat is not None:
+        waiting = [c for c in waiting if c.id == chat.id]
+    if not waiting:
+        return False
+    waiting[0].resume.set()
+    return True
+
+
 def on_stop(data: dict) -> dict:
     chat = sessions.touch(data)
     message = data.get("last_assistant_message") or _last_message(data.get("transcript_path"))
@@ -195,32 +238,62 @@ def on_stop(data: dict) -> dict:
     if look:
         notify(chat.title, look.get("what") or "Нужно глянуть", look.get("target"))
 
+    mode = config.mode()
+    question = s.get("question")
+    chat.last = s["speech"]
+    if mode == "quiet" and not chat.pending:
+        chat.unread = True
+        voice.cue()
+        notify(chat.title, "Нужен твой ответ" if question else "Готово")
+        return {}
+
     with sessions.lock:
         chat.waiting = True
+    dialog.acquire()
+    held = True
     try:
-        with dialog:
-            with sessions.lock:
-                chat.waiting = False
-                queued = chat.pending.pop(0) if chat.pending else None
-            status.set("speaking", chat.title)
-            chat.last = s["speech"]
-            voice.speak(f"Чат «{chat.title}». {s['speech']}")
-            if look:
-                voice.speak(f"Сходи глянь: {look.get('what', '')}. Кинул уведомление.")
-            if queued:
-                voice.speak(f"Передаю сюда твоё: {queued}")
-                return _continue(queued)
-            if s.get("question"):
-                voice.speak(s["question"])
-            replay = " ".join(x for x in (s["speech"], s.get("question") or "") if x)
-            said = converse(chat, config.ANSWER_TIMEOUT if s.get("question") else config.FOLLOWUP_WINDOW, replay)
-            if not said:
-                if s.get("question"):
-                    voice.speak(say("wait"))
-                return {}
-            voice.speak(say("ack"))
-            return _continue(said)
+        with sessions.lock:
+            chat.waiting = False
+            queued = chat.pending.pop(0) if chat.pending else None
+        status.set("speaking", chat.title)
+        if queued:  # ты уже сказал, что передать, — спрашивать незачем
+            voice.speak(f"«{chat.title}» освободился, передаю твоё: {queued}")
+            return _continue(queued)
+        if mode == "knock":
+            answer = knock(f"«{chat.title}»: нужен твой ответ. Можешь говорить?" if question
+                           else f"«{chat.title}» — готово. Рассказать?")
+            if answer == "no":
+                voice.speak("Ок, позже." if question else "Ок, спросишь — расскажу.")
+            if answer != "yes":
+                chat.unread = True
+                if not question:
+                    return {}
+                dialog.release()
+                held = False
+                status.set("idle", "")
+                if not wait_deferred(chat):
+                    log(f"«{chat.title}»: ответа не дождался, вопрос остался на экране")
+                    return {}
+                dialog.acquire()
+                held = True
+                status.set("speaking", chat.title)
+        chat.unread = False
+        voice.speak(f"Чат «{chat.title}». {s['speech']}")
+        if look:
+            voice.speak(f"Сходи глянь: {look.get('what', '')}. Кинул уведомление.")
+        if question:
+            voice.speak(question)
+        replay = " ".join(x for x in (s["speech"], question or "") if x)
+        said = converse(chat, config.ANSWER_TIMEOUT if question else config.FOLLOWUP_WINDOW, replay)
+        if not said:
+            if question:
+                voice.speak(say("wait"))
+            return {}
+        voice.speak(say("ack", chat.title))
+        return _continue(said)
     finally:
+        if held:
+            dialog.release()
         with sessions.lock:
             chat.waiting = False
         status.set("idle", "")
@@ -233,30 +306,46 @@ def on_ask(data: dict) -> dict:
     if not questions:
         return {}
     chat = sessions.touch(data)
-    notify(chat.title, "Вопрос голосом — отвечай вслух или на экране")
+    notify(chat.title, "Вопрос с вариантами — отвечай вслух или на экране")
+    mode = config.mode()
+    if mode == "quiet":
+        voice.cue()
+        return {}
     answers = {}
-    with dialog:
+    dialog.acquire()
+    held = True
+    try:
         status.set("speaking", chat.title)
-        try:
+        if mode == "knock":
+            # карточку не держим: пока хук ждёт, на экране её тоже нет
+            answer = knock(f"«{chat.title}»: вопрос с вариантами. Можешь говорить?")
+            if answer != "yes":
+                if answer == "no":
+                    voice.speak("Ок, карточка на экране.")
+                _screen_handoff[chat.id] = time.time()
+                return {}
+        else:
             voice.speak(f"Чат «{chat.title}». Есть вопрос.")
-            for q in questions:
-                voice.speak(brain.speak_question(q))
-                said = voice.listen(config.ANSWER_TIMEOUT)
-                cmd = interpret(said) if said else {"intent": "cancel"}
-                if not said or cmd["intent"] in ("cancel", "mute"):
-                    voice.speak(say("deaf") if not said else "Ок, ответишь на экране.")
-                    _screen_handoff[chat.id] = time.time()
-                    return {}
-                r = brain.pick(q, cmd.get("text") or said)
-                if r.get("skip"):
-                    voice.speak("Ок, на экране.")
-                    _screen_handoff[chat.id] = time.time()
-                    return {}
-                answers[q["question"]] = r["answer"]
-                log(f"ответ: {q['question']} → {r['answer']}")
-            voice.speak(say("ack"))
-        finally:
-            status.set("idle", "")
+        for q in questions:
+            voice.speak(brain.speak_question(q))
+            said = voice.listen(config.ANSWER_TIMEOUT)
+            cmd = interpret(said) if said else {"intent": "cancel"}
+            if not said or cmd["intent"] in ("cancel", "mute"):
+                voice.speak(say("deaf") if not said else "Ок, ответишь на экране.")
+                _screen_handoff[chat.id] = time.time()
+                return {}
+            r = brain.pick(q, cmd.get("text") or said)
+            if r.get("skip"):
+                voice.speak("Ок, на экране.")
+                _screen_handoff[chat.id] = time.time()
+                return {}
+            answers[q["question"]] = r["answer"]
+            log(f"ответ: {q['question']} → {r['answer']}")
+        voice.speak(say("ack", chat.title))
+    finally:
+        if held:
+            dialog.release()
+        status.set("idle", "")
     return {"hookSpecificOutput": {
         "hookEventName": "PreToolUse",
         "permissionDecision": "allow",
@@ -272,6 +361,9 @@ def on_notify(data: dict) -> dict:
     if time.time() - _screen_handoff.get(chat.id, 0) < 60:
         return {}  # только что сами отправили отвечать на экране — не дублируем
     notify(chat.title, data.get("message") or phrase)
+    if config.mode() == "quiet":
+        voice.cue()
+        return {}
 
     def speak():
         with dialog:
@@ -298,10 +390,16 @@ def _chats_context() -> str:
 
 def on_hotkey() -> None:
     """Заговорить первым: болтовня с Джарвисом; «чат Икс, …» — отложить в чат; «запиши …» — в буфер."""
+    if resume():  # висит отложенный вопрос — ⌃⌥J и есть «да, говори»
+        return
     if not dialog.acquire(blocking=False):
         return
     try:
-        voice.speak("Слушаю.")
+        unread = [c for c in sessions.recent() if c.unread]
+        for c in unread:
+            c.unread = False
+        names = ", ".join(f"«{c.title}»" for c in unread[:4])
+        voice.speak(f"Слушаю. Кстати, готовы: {names} — спроси, что там." if unread else "Слушаю.")
         history: list[dict] = []
         last = ""
         timeout = 10

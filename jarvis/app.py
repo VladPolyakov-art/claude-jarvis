@@ -29,13 +29,18 @@ class JarvisApp(rumps.App):
         self.toggle = rumps.MenuItem("Включён", callback=self.on_toggle)
         self.talk = rumps.MenuItem("Сказать первым  ⌃⌥J", callback=self.on_talk)
         self.chats = rumps.MenuItem("Чаты")
+        self.modes = rumps.MenuItem("Режим")
+        for key, title in config.MODES.items():
+            item = rumps.MenuItem(title, callback=self.on_mode)
+            item.mode = key
+            self.modes.add(item)
         self.voices = rumps.MenuItem("Голос")
         for key, title in VOICE_TITLES.items():
             item = rumps.MenuItem(title, callback=self.on_voice)
             item.voice = key
             self.voices.add(item)
         self.now = rumps.MenuItem("Загружаюсь…")
-        self.menu = [self.now, None, self.toggle, self.talk, None, self.chats, self.voices, None,
+        self.menu = [self.now, None, self.toggle, self.talk, None, self.chats, self.modes, self.voices, None,
                      rumps.MenuItem("Открыть лог", callback=lambda _: subprocess.run(["open", str(config.LOG_FILE)])),
                      rumps.MenuItem("Выйти", callback=lambda _: rumps.quit_application())]
         self._chats_sig = None
@@ -44,16 +49,18 @@ class JarvisApp(rumps.App):
     def refresh(self, _):
         off = config.OFF_FLAG.exists()
         chats = sessions.recent()
-        queued = sum(len(c.pending) for c in chats) + sum(c.waiting for c in chats)
+        queued = sum(len(c.pending) for c in chats) + sum(c.waiting or c.resume is not None for c in chats)
         icon = "🔇" if off and status.mode == "idle" else ICONS.get(status.mode, "🎙")
         self.title = icon + (f"{queued}" if queued else "")
         self.toggle.state = not off
         mode_text = {"loading": "Загружаю модели…", "idle": "Жду", "speaking": "Говорю",
                      "listening": "Слушаю", "thinking": "Думаю"}.get(status.mode, status.mode)
         self.now.title = ("Выключен — хуки молчат" if off else mode_text) + (f" · {status.chat}" if status.chat else "")
+        for item in self.modes.values():
+            item.state = item.mode == config.mode()
         for item in self.voices.values():
             item.state = item.voice == config.speaker()
-        sig = [(c.title, c.waiting, len(c.pending)) for c in chats]
+        sig = [(c.title, c.waiting, len(c.pending), c.resume is not None, c.unread) for c in chats]
         if sig != self._chats_sig:
             self._chats_sig = sig
             if self.chats._menu is not None:  # rumps падает на clear() у ещё не созданного подменю
@@ -62,7 +69,12 @@ class JarvisApp(rumps.App):
                 self.chats.add(rumps.MenuItem("Пока пусто"))
             for c in chats:
                 mark = (" · в очереди" if c.waiting else "") + (f" · ✉️ {len(c.pending)}" if c.pending else "")
-                self.chats.add(rumps.MenuItem(c.title + mark))
+                if c.resume is not None:  # отложенный вопрос — клик = «давай, говори»
+                    item = rumps.MenuItem(f"❓ {c.title} — ответить голосом", callback=self.on_resume)
+                    item.chat = c
+                    self.chats.add(item)
+                else:
+                    self.chats.add(rumps.MenuItem(("• " if c.unread else "") + c.title + mark))
 
     def on_toggle(self, _):
         if config.OFF_FLAG.exists():
@@ -72,6 +84,12 @@ class JarvisApp(rumps.App):
 
     def on_talk(self, _):
         threading.Thread(target=daemon.on_hotkey, daemon=True).start()
+
+    def on_resume(self, item):
+        daemon.resume(item.chat)
+
+    def on_mode(self, item):
+        config.MODE_FILE.write_text(item.mode)
 
     def on_voice(self, item):
         config.VOICE_FILE.write_text(item.voice)

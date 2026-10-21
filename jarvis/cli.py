@@ -90,6 +90,10 @@ def main() -> None:
         if rest and rest[0] in config.VOICES:
             config.VOICE_FILE.write_text(rest[0])
         print(f"голос: {config.speaker()} (доступны: {', '.join(config.VOICES)})")
+    elif cmd == "mode":
+        if rest and rest[0] in config.MODES:
+            config.MODE_FILE.write_text(rest[0])
+        print(f"режим: {config.mode()} — {config.MODES[config.mode()]} (доступны: {', '.join(config.MODES)})")
     elif cmd == "test":
         from . import voice
         voice.speak("Проверка связи. Скажи что-нибудь после сигнала.")

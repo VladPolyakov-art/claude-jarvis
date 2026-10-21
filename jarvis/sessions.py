@@ -15,6 +15,8 @@ class Chat:
     pending: list[str] = field(default_factory=list)  # «чат X, …» — уйдёт при его остановке
     seen: float = 0.0
     last: str = ""                            # последняя выжимка — о чём чат сейчас
+    unread: bool = False                      # закончил шаг, а ты ещё не слушал
+    resume: threading.Event | None = None     # вопрос отложен «потом» — ждёт ⌃⌥J или клика в меню
 
 
 _chats: dict[str, Chat] = {}
@@ -57,3 +59,8 @@ def recent(hours: float = 12) -> list[Chat]:
 def any_waiting() -> bool:
     with lock:
         return any(c.waiting for c in _chats.values())
+
+
+def deferred() -> list[Chat]:
+    with lock:
+        return [c for c in _chats.values() if c.resume is not None]
