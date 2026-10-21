@@ -68,6 +68,11 @@ def speakable(text: str) -> str:
     """Чистит текст под Silero: без markdown, ссылок, цифр и латиницы."""
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
     text = re.sub(r"https?://\S+", " ссылка ", text)
+    text = re.sub(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+(?:=\S+)?", " настройка ", text)   # JARVIS_TALK_MODEL=…
+    text = re.sub(r"\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b", " ", text)  # хеши коммитов
+    for sym, word in (("⌃", "контрол"), ("⌥", "опшн"), ("⌘", "команд"), ("⇧", "шифт")):
+        text = text.replace(sym, f" {word} ")
+    text = re.sub(r"(\w):(\w)", r"\1 \2", text)  # qwen3:8b
     text = re.sub(r"(?:~|\.{1,2})?(?:/[\w.-]+){2,}", " файл ", text)
     text = re.sub(r"[`*_#>|\[\]{}<>]", " ", text)
     text = text.replace("%", " процентов").replace("&", " и ").replace("→", ", ")

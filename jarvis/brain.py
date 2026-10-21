@@ -76,7 +76,8 @@ def summarize(message: str, project: str) -> dict:
     try:
         out = _chat(system, f"Проект: {project}\n\nСообщение агента:\n{_clip(message)}", SUMMARY_SCHEMA)
         # маленькая модель додумывает — сверяем с исходным текстом
-        if "?" not in message:
+        # вопрос в кавычках — это пример фразы, а не вопрос пользователю
+        if "?" not in re.sub(r"«[^»]*»|\"[^\"]*\"|`[^`]*`", "", message):
             out["question"] = None
         look = out.get("look")
         if look:
