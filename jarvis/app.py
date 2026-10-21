@@ -7,7 +7,7 @@ import threading
 import rumps
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 
-from . import config, daemon, sessions, status
+from . import config, daemon, hotkey, sessions, status
 from .log import log
 
 ICONS = {"loading": "⏳", "idle": "🎙", "speaking": "🗣", "listening": "👂", "thinking": "💭"}
@@ -84,7 +84,8 @@ def main() -> None:
         subprocess.run(["terminal-notifier", "-title", "Jarvis", "-message", "Уже запущен"], check=False)
         sys.exit(0)
     NSApplication.sharedApplication().setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-    threading.Thread(target=daemon.serve, daemon=True).start()
+    hotkey.register(config.HOTKEY, daemon.on_hotkey)  # Carbon: без «Универсального доступа»
+    threading.Thread(target=daemon.serve, kwargs={"hotkey": False}, daemon=True).start()
     JarvisApp().run()
 
 

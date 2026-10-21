@@ -14,6 +14,7 @@ class Chat:
     waiting: bool = False                     # стоит в очереди к Jarvis прямо сейчас
     pending: list[str] = field(default_factory=list)  # «чат X, …» — уйдёт при его остановке
     seen: float = 0.0
+    last: str = ""                            # последняя выжимка — о чём чат сейчас
 
 
 _chats: dict[str, Chat] = {}

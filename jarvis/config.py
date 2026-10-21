@@ -37,6 +37,7 @@ def speaker() -> str:
 WHISPER_MODEL = os.environ.get("JARVIS_WHISPER", "mlx-community/whisper-large-v3-turbo")
 
 # Диалог
+CHAT_WINDOW = float(os.environ.get("JARVIS_CHAT_WINDOW", "8"))  # сколько ждать реплику в болтовне
 HOTKEY = os.environ.get("JARVIS_HOTKEY", "<ctrl>+<alt>+j")
 ANSWER_TIMEOUT = float(os.environ.get("JARVIS_ANSWER_TIMEOUT", 30))   # ждать ответа на вопрос, с
 FOLLOWUP_WINDOW = float(os.environ.get("JARVIS_FOLLOWUP", 6))         # «есть что добавить?» без вопроса, с; 0 — не слушать

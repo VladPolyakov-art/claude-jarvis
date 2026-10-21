@@ -24,6 +24,7 @@ SAY = {
     "deaf": ["Не расслышал. Отвечай на экране.", "Тишина в эфире. Ладно, на экране ответишь."],
     "mute": ["Всё, молчу. Включишь меня в меню или хоткеем.", "Ушёл в тень. Зови, если что."],
     "hello": ["Джарвис на связи. Погнали.", "Я тут. Работаем.", "Джарвис в эфире."],
+    "bye": ["Давай, на связи.", "Ок, если что — зови.", "Погнал работать."],
 }
 
 
@@ -39,6 +40,7 @@ SHORT_NO = re.compile(r"^\W*(ничего|нет|не надо|потом|не �
 MUTE = re.compile(r"^\W*(помолчи|замолчи|выключись|спи|отключись|уйди)\b", re.I)
 UNMUTE = re.compile(r"^\W*(включись|проснись|вернись)\b", re.I)
 REPEAT = re.compile(r"^\W*(повтори\w*|ещё раз|еще раз|не расслышал\w*|что\W*$|а\W*$|какой вопрос|что ты сказал)", re.I)
+DICTATE = re.compile(r"^\W*(запиши|в буфер|продиктую|диктовка)\W*", re.I)
 COMMANDISH = re.compile(r"\b(чат\w*|переключи\w*|передай\w*)\b", re.I)
 
 
@@ -201,6 +203,7 @@ def on_stop(data: dict) -> dict:
                 chat.waiting = False
                 queued = chat.pending.pop(0) if chat.pending else None
             status.set("speaking", chat.title)
+            chat.last = s["speech"]
             voice.speak(f"Чат «{chat.title}». {s['speech']}")
             if look:
                 voice.speak(f"Сходи глянь: {look.get('what', '')}. Кинул уведомление.")
@@ -283,34 +286,74 @@ def on_say(data: dict) -> dict:
     return {}
 
 
+def _chats_context() -> str:
+    chats = sessions.recent()
+    if not chats:
+        return "Пока ни одного чата не видел."
+    return "\n".join(f"— «{c.title}»: {c.last or 'пока ничего не рассказывал'}"
+                     + (", ждёт очереди" if c.waiting else "")
+                     + (f", для него отложено: {'; '.join(c.pending)}" if c.pending else "")
+                     for c in chats[:8])
+
+
 def on_hotkey() -> None:
-    """Заговорить первым: «чат Икс, …» — отложить в чат; иначе — текст в буфер обмена."""
+    """Заговорить первым: болтовня с Джарвисом; «чат Икс, …» — отложить в чат; «запиши …» — в буфер."""
     if not dialog.acquire(blocking=False):
         return
     try:
         voice.speak("Слушаю.")
-        said = voice.listen(10)
-        if not said:
-            return
-        cmd = interpret(said)
-        intent = cmd["intent"]
-        if intent == "cancel":
-            voice.speak(say("cancel"))
-        elif intent == "mute":
-            config.OFF_FLAG.touch()
-            voice.speak(say("mute"))
-        elif intent == "unmute":
-            config.OFF_FLAG.unlink(missing_ok=True)
-            voice.speak("Я снова в деле.")
-        elif intent in ("list", "repeat"):
-            voice.speak(chat_list())
-        elif intent == "route" and cmd["chat"]:
-            route(cmd["chat"], cmd.get("text", ""))
-        else:
-            text = cmd.get("text") or said
-            subprocess.run(["pbcopy"], input=text.encode(), check=False)
-            notify("диктовка", text)
-            voice.speak("Не понял, в какой чат, — положил в буфер. Вставь сам или скажи «чат такой-то».")
+        history: list[dict] = []
+        last = ""
+        timeout = 10
+        for _ in range(12):
+            said = voice.listen(timeout)
+            if not said:
+                if history:
+                    voice.speak(say("bye"))
+                return
+            timeout = config.CHAT_WINDOW
+            m = DICTATE.match(WAKE.sub("", said))
+            if m:
+                text = WAKE.sub("", said)[m.end():].strip() or said
+                subprocess.run(["pbcopy"], input=text.encode(), check=False)
+                voice.speak("Записал в буфер, вставляй.")
+                return
+            cmd = interpret(said)
+            intent = cmd["intent"]
+            if intent == "cancel":
+                voice.speak(say("bye") if history else say("cancel"))
+                return
+            if intent == "mute":
+                config.OFF_FLAG.touch()
+                voice.speak(say("mute"))
+                return
+            if intent == "unmute":
+                config.OFF_FLAG.unlink(missing_ok=True)
+                voice.speak("Я снова в деле.")
+                continue
+            if intent == "repeat":
+                voice.speak(last or "Да я ещё ничего не сказал. Говори.")
+                continue
+            if intent == "list":
+                voice.speak(chat_list())
+                continue
+            if intent == "route":
+                if cmd["chat"]:
+                    route(cmd["chat"], cmd.get("text", ""))
+                else:
+                    voice.speak("Не понял, какой чат. " + chat_list())
+                continue
+            status.set("thinking")
+            history.append({"role": "user", "content": cmd.get("text") or said})
+            out = brain.talk(history, _chats_context())
+            last = out["speech"]
+            history.append({"role": "assistant", "content": last})
+            voice.speak(last)
+            if out.get("bye"):
+                return
+            if sessions.any_waiting():
+                voice.speak("Погоди, там Клод закончил шаг — переключаюсь.")
+                return
     finally:
         dialog.release()
         status.set("idle", "")
@@ -351,46 +394,18 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 
-def _ax_trusted(prompt: bool) -> bool:
-    """Есть ли у процесса «Универсальный доступ». prompt=True — macOS сама покажет окно и добавит Jarvis в список."""
-    try:
-        import ctypes
-        import objc
-        from Foundation import NSDictionary
-        ax = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/ApplicationServices.framework/ApplicationServices")
-        ax.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
-        ax.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
-        opts = NSDictionary.dictionaryWithDictionary_({"AXTrustedCheckOptionPrompt": prompt})
-        return ax.AXIsProcessTrustedWithOptions(objc.pyobjc_id(opts))
-    except Exception as e:
-        log(f"не смог проверить универсальный доступ: {e}")
-        return True
-
-
 def start_hotkey() -> None:
-    if not _ax_trusted(prompt=True):
-        log("хоткей ждёт доступа: Настройки → Конфиденциальность → Универсальный доступ → Jarvis. "
-            "Если Jarvis там уже включён — удали его «−» и перезапусти Jarvis (после пересборки старое разрешение не действует).")
-        threading.Thread(target=_await_trust, daemon=True).start()
-        return
+    """Хоткей для запуска без меню-бара (./jarvis.sh start). Нужен «Универсальный доступ» для терминала."""
     try:
         from pynput import keyboard
         keyboard.GlobalHotKeys({config.HOTKEY: lambda: threading.Thread(
             target=on_hotkey, daemon=True).start()}).start()
         log(f"хоткей {config.HOTKEY} — заговорить первым")
     except Exception as e:
-        log(f"хоткей не включился ({e}). Дай доступ: Настройки → Конфиденциальность → Мониторинг ввода.")
+        log(f"хоткей не включился ({e}). Дай доступ: Настройки → Конфиденциальность → Универсальный доступ.")
 
 
-def _await_trust() -> None:
-    """Ждёт, пока пользователь включит доступ, и тогда включает хоткей без перезапуска."""
-    while not _ax_trusted(prompt=False):
-        time.sleep(3)
-    log("универсальный доступ получен")
-    start_hotkey()
-
-
-def serve(greet: bool = True) -> None:
+def serve(greet: bool = True, hotkey: bool = True) -> None:
     status.set("loading")
     log("загружаю голос, VAD и Whisper (первый запуск качает модели)…")
     voice.warmup()
@@ -398,7 +413,8 @@ def serve(greet: bool = True) -> None:
         brain.summarize("Тест.", "jarvis")
     except Exception as e:
         log(f"Ollama не отвечает: {e}")
-    start_hotkey()
+    if hotkey:
+        start_hotkey()
     server = ThreadingHTTPServer((config.HOST, config.PORT), Handler)
     log(f"Jarvis слушает http://{config.HOST}:{config.PORT}")
     status.set("idle")

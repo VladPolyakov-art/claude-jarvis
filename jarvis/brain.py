@@ -16,15 +16,16 @@ STYLE = (
 )
 
 
-def _chat(system: str, user: str, schema: dict) -> dict:
+def _chat(system: str, user: str | list[dict], schema: dict, temperature: float = 0.3) -> dict:
+    history = user if isinstance(user, list) else [{"role": "user", "content": user}]
     body = {
         "model": config.OLLAMA_MODEL,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+        "messages": [{"role": "system", "content": system}, *history],
         "format": schema,
         "stream": False,
         "think": False,
         "keep_alive": "30m",
-        "options": {"temperature": 0.3},
+        "options": {"temperature": temperature},
     }
     req = urllib.request.Request(
         f"{config.OLLAMA_URL}/api/chat",
@@ -165,3 +166,26 @@ def command(said: str, chats: list[str]) -> dict:
     except Exception as e:
         log(f"brain.command: {e}")
         return {"intent": "reply", "chat": None, "has_message": True}
+
+
+def talk(history: list[dict], chats: str) -> dict:
+    """Болтовня с Джарвисом. history — [{role, content}], последняя реплика пользователя. → {speech, bye}."""
+    system = STYLE + (
+        "\nСейчас вы просто болтаете голосом: пользователь сам тебя позвал. Отвечай живо, 1–3 коротких "
+        "предложения, можно встречный вопрос. Ты крутишься локально на его маке и пересказываешь ему, что "
+        "делают агенты Клода в чатах; сам код не пишешь и в интернет не ходишь — если просит такое, "
+        "предложи сказать «чат такой-то, …», и ты передашь. Не выдумывай факты о его проектах сверх того, "
+        "что ниже. bye = true, если он прощается или закругляется («пока», «давай», «всё, работаем»).\n"
+        "Что ты знаешь о чатах:\n" + chats
+    )
+    try:
+        out = _chat(system, history[-12:], {
+            "type": "object",
+            "properties": {"speech": {"type": "string"}, "bye": {"type": "boolean"}},
+            "required": ["speech", "bye"],
+        }, temperature=0.7)
+        if out.get("speech"):
+            return out
+    except Exception as e:
+        log(f"brain.talk: {e}")
+    return {"speech": "Что-то я подвис, Оллама не отвечает. Попробуй позже.", "bye": True}
