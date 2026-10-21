@@ -1,0 +1,10 @@
+torch
+numpy
+sounddevice
+mlx-whisper
+num2words
+pynput
+silero-vad
+omegaconf
+piper-tts
+rumps
